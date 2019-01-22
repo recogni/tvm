@@ -59,6 +59,7 @@ def compile_cuda(code,
     cmd = ["nvcc"]
     cmd += ["--%s" % target, "-O3"]
     cmd += ["-arch", arch]
+    cmd += ["-std=c++14"]
 
     if options:
         if isinstance(options, str):
