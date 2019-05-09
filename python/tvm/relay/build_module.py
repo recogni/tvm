@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 """
 Construct the necessary state for the TVM graph runtime
 from a Relay expression.
@@ -9,7 +25,7 @@ from ..build_module import build as _tvm_build_module
 from .. import nd as _nd, target as _target, autotvm
 from ..contrib import graph_runtime as _graph_rt
 from . import ir_pass
-from . import expr
+from . import expr as _expr
 from .backend import interpreter as _interpreter
 from .backend import graph_runtime_codegen as _graph_gen
 
@@ -21,6 +37,8 @@ OPT_PASS_LEVEL = {
     "CombineParallelConv2D": 3,
     "FoldScaleAxis": 3,
     "AlterOpLayout": 3,
+    "CanonicalizeOps": 3,
+    "EliminateCommonSubexpr": 3,
 }
 
 
@@ -125,11 +143,11 @@ def _bind_params_by_name(func, params):
         arg = name_dict[k]
         if arg is None:
             raise ValueError("Multiple args in the function have name %s" % k)
-        bind_dict[arg] = expr.const(v)
-    return expr.bind(func, bind_dict)
+        bind_dict[arg] = _expr.const(v)
+    return _expr.bind(func, bind_dict)
 
 
-def optimize(func, target, params=None):
+def optimize(func, target=None, params=None):
     """Perform target invariant optimizations.
 
     Parameters
@@ -161,6 +179,16 @@ def optimize(func, target, params=None):
         func = ir_pass.infer_type(func)
         func = ir_pass.simplify_inference(func)
 
+    if cfg.pass_enabled("EliminateCommonSubexpr"):
+        def fskip(expr):
+            if isinstance(expr, _expr.Call) and expr.op.name == 'cast' and \
+               expr.attrs.dtype == 'int32':
+                return True
+            return False
+
+        func = ir_pass.infer_type(func)
+        func = ir_pass.eliminate_common_subexpr(func, fskip)
+
     if cfg.pass_enabled("CombineParallelConv2D"):
         func = ir_pass.infer_type(func)
         func = ir_pass.combine_parallel_conv2d(func)
@@ -177,13 +205,15 @@ def optimize(func, target, params=None):
         func = ir_pass.forward_fold_scale_axis(func)
         func = ir_pass.fold_constant(func)
 
+    if cfg.pass_enabled("CanonicalizeOps"):
+        func = ir_pass.infer_type(func)
+        func = ir_pass.canonicalize_ops(func)
+
     # FIXME(zhiics) Skip AlterOpLayout pass for heterogeneous compilation for
     # now. We probably need to pass target to this pass as well. Fix it in
     # a followup PR.
     if cfg.pass_enabled("AlterOpLayout"):
         if isinstance(target, _target.Target):
-            func = ir_pass.infer_type(func)
-            func = ir_pass.canonicalize_ops(func)
             func = ir_pass.infer_type(func)
             with target:
                 func = ir_pass.alter_op_layout(func)
@@ -400,7 +430,7 @@ class GraphExecutor(_interpreter.Executor):
         graph_json, mod, params = build(func, target=self.target)
         gmodule = _graph_rt.create(graph_json, mod, self.ctx)
         if params:
-            gmodule.set_input(*params)
+            gmodule.set_input(**params)
 
         def _graph_wrapper(*args, **kwargs):
             args = self._convert_args(func, args, kwargs)
@@ -444,7 +474,6 @@ def create_executor(kind="debug",
         target = _target.create(target)
     if kind == "debug":
         return _interpreter.Interpreter(mod, ctx, target)
-    elif kind == "graph":
+    if kind == "graph":
         return GraphExecutor(mod, ctx, target)
-    else:
-        raise RuntimeError("unknown mode {0}".format(mode))
+    raise RuntimeError("unknown mode {0}".format(mode))

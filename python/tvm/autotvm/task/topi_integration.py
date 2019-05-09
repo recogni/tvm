@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 # pylint: disable=unused-variable,invalid-name,unused-argument
 """
 Decorators for registering tunable templates to TOPI.
@@ -17,7 +33,7 @@ from .task import args_to_workload, dispatcher, register
 from ..util import get_const_tuple
 
 # A table that records all registered dispatcher for all targets
-_REGISTED_DISPATHCER = {
+_REGISTERED_DISPATCHER = {
 }
 
 
@@ -67,7 +83,11 @@ class TaskExtractEnv:
             topi.nn.depthwise_conv2d_nchw: "topi_nn_depthwise_conv2d_nchw",
             topi.nn.group_conv2d_nchw: "topi_nn_group_conv2d_nchw",
             topi.nn.conv2d_transpose_nchw: "topi_nn_conv2d_transpose_nchw",
+            topi.nn.conv2d_NCHWc: "topi_x86_conv2d_NCHWc",
             topi.nn.dense: "topi_nn_dense",
+            topi.nn.bitserial_conv2d_nchw: "topi_nn_bitserial_conv2d_nchw",
+            topi.nn.bitserial_conv2d_nhwc: "topi_nn_bitserial_conv2d_nhwc",
+            topi.nn.deformable_conv2d_nchw: "topi_nn_deformable_conv2d_nchw",
         }
 
         self.topi_to_schedule = {
@@ -77,7 +97,11 @@ class TaskExtractEnv:
                                             topi.generic.schedule_depthwise_conv2d_nhwc],
             topi.nn.group_conv2d_nchw: [topi.generic.schedule_group_conv2d_nchw],
             topi.nn.conv2d_transpose_nchw: [topi.generic.schedule_conv2d_transpose_nchw],
+            topi.nn.conv2d_NCHWc: [topi.generic.schedule_conv2d_NCHWc],
             topi.nn.dense: [topi.generic.schedule_dense],
+            topi.nn.bitserial_conv2d_nchw: [topi.generic.schedule_bitserial_conv2d_nchw],
+            topi.nn.bitserial_conv2d_nhwc: [topi.generic.schedule_bitserial_conv2d_nhwc],
+            topi.nn.deformable_conv2d_nchw: [topi.generic.schedule_deformable_conv2d_nchw],
         }
 
         self._register_tracing()
@@ -102,7 +126,6 @@ class TaskExtractEnv:
                         key = (self.topi_to_task[compute_func], serialize_args(args))
                         if key not in self.task_collection:
                             self.task_collection.append(key)
-
                     return compute_func.fdefault(*args)
             _local_scope(topi_compute)
 
@@ -172,6 +195,42 @@ class TaskExtractEnv:
                 return s, [data, weight, bias, C]
             return s, [data, weight, C]
 
+        @register("topi_nn_bitserial_conv2d_nhwc")
+        def _topi_bitserial_conv2d_nhwc(*args, **kwargs):
+            args = deserialize_args(args)
+            C = topi.nn.bitserial_conv2d_nhwc(*args, **kwargs)
+            s = topi.generic.nn.schedule_bitserial_conv2d_nhwc([C])
+            data = args[0]
+            kernel = args[1]
+            return s, [data, kernel, C]
+
+        @register("topi_nn_bitserial_conv2d_nchw")
+        def _topi_bitserial_conv2d_nchw(*args, **kwargs):
+            args = deserialize_args(args)
+            C = topi.nn.bitserial_conv2d_nchw(*args, **kwargs)
+            s = topi.generic.nn.schedule_bitserial_conv2d_nchw([C])
+            data = args[0]
+            kernel = args[1]
+            return s, [data, kernel, C]
+
+        @register("topi_nn_deformable_conv2d_nchw")
+        def _topi_nn_deformable_conv2d_nchw(*args, **kwargs):
+            assert not kwargs, "Do not support kwargs in template function call"
+            args = deserialize_args(args)
+            A, Offset, W = args[:3]
+            C = topi.nn.deformable_conv2d_nchw(*args, **kwargs)
+            s = topi.generic.schedule_deformable_conv2d_nchw([C])
+            return s, [A, Offset, W, C]
+
+        @register("topi_nn_conv2d_NCHWc")
+        def _topi_nn_conv2d_NCHWc(*args, **kwargs):
+            assert not kwargs, "Do not support kwargs in template function call"
+            args = deserialize_args(args)
+            A, W = args[:2]
+            C = topi.nn.conv2d_NCHWc(*args, **kwargs)
+            s = topi.generic.schedule_conv2d_NCHWc([C])
+            return s, [A, W, C]
+
     def reset(self, wanted_topi_funcs):
         """Reset task collections
 
@@ -210,7 +269,7 @@ class TaskExtractEnv:
 def register_topi_compute(topi_compute, target_keys, template_keys, func=None):
     """Register a tunable template for a topi compute function.
 
-    After the registration. This topi compute will become a configuration dispatcher. It uses
+    After the registration, this topi compute will become a configuration dispatcher. It uses
     all its argument as workload and dispatches configurations according to the input workload.
 
     It also stores this "workload" to its final ComputeOp, which can be used to reconstruct
@@ -243,18 +302,18 @@ def register_topi_compute(topi_compute, target_keys, template_keys, func=None):
     def _decorator(f):
         targets = [target_keys] if isinstance(target_keys, str) else target_keys
         for target_key in targets:
-            if target_key not in _REGISTED_DISPATHCER:
-                _REGISTED_DISPATHCER[target_key] = {}
-            if topi_compute not in _REGISTED_DISPATHCER[target_key]:
+            if target_key not in _REGISTERED_DISPATCHER:
+                _REGISTERED_DISPATCHER[target_key] = {}
+            if topi_compute not in _REGISTERED_DISPATCHER[target_key]:
                 @topi_compute.register(target_key)
                 @dispatcher
                 def config_dispatcher(*args, **kwargs):
                     """override topi call as a config dispatcher"""
                     assert not kwargs, "Do not support kwargs in template function call"
                     return args_to_workload(args, topi_compute)
-                _REGISTED_DISPATHCER[target_key][topi_compute] = config_dispatcher
+                _REGISTERED_DISPATCHER[target_key][topi_compute] = config_dispatcher
 
-            config_dispatcher = _REGISTED_DISPATHCER[target_key][topi_compute]
+            config_dispatcher = _REGISTERED_DISPATCHER[target_key][topi_compute]
 
             @config_dispatcher.register(template_keys)
             def template_call(cfg, *args, **kwargs):
@@ -331,9 +390,9 @@ def register_topi_schedule(topi_schedule, target_keys, template_keys, func=None)
     def _decorator(f):
         targets = [target_keys] if isinstance(target_keys, str) else target_keys
         for target_key in targets:
-            if target_key not in _REGISTED_DISPATHCER:
-                _REGISTED_DISPATHCER[target_key] = {}
-            if topi_schedule not in _REGISTED_DISPATHCER[target_key]:
+            if target_key not in _REGISTERED_DISPATCHER:
+                _REGISTERED_DISPATCHER[target_key] = {}
+            if topi_schedule not in _REGISTERED_DISPATCHER[target_key]:
                 @topi_schedule.register(target_key)
                 @dispatcher
                 def config_dispatcher(outs, *args, **kwargs):
@@ -357,9 +416,9 @@ def register_topi_schedule(topi_schedule, target_keys, template_keys, func=None)
 
                     return args_to_workload(workload)
 
-                _REGISTED_DISPATHCER[target_key][topi_schedule] = config_dispatcher
+                _REGISTERED_DISPATCHER[target_key][topi_schedule] = config_dispatcher
 
-            config_dispatcher = _REGISTED_DISPATHCER[target_key][topi_schedule]
+            config_dispatcher = _REGISTERED_DISPATCHER[target_key][topi_schedule]
 
             @config_dispatcher.register(template_keys)
             def template_call(cfg, outs, *args, **kwargs):

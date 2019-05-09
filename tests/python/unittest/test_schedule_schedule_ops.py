@@ -1,5 +1,21 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 import tvm
-
+import numpy as np
 
 def test_schedule0():
     m = tvm.var('m')
@@ -432,6 +448,52 @@ def test_loop_dep_reduce_cache_write():
     s.cache_write(Y, 'local')
     f = tvm.build(s, [X, Y])
 
+def test_reduction_and_dummy_fuse_split():
+    n = 10
+    X = tvm.placeholder(shape=(n,), dtype='int32', name="X")
+    k = tvm.reduce_axis((0, n))
+    Y = tvm.compute((), lambda: tvm.sum(X[k], k), name="Y")
+    s = tvm.create_schedule([Y.op])
+    ax = s[Y.op].fuse(*Y.op.axis)
+    axo, axi = s[Y.op].split(ax, nparts=20)
+    f = tvm.build(s, [Y, X])
+
+    args = [tvm.nd.empty((), 'int32')] + [tvm.ndarray.array(np.ones((n,), dtype='int32'))]
+    f(*args)
+    assert args[0].asnumpy() == n
+
+    n = 10
+    X = tvm.placeholder(shape=(n,), dtype='int32', name="X")
+    k = tvm.reduce_axis((0, n))
+    Y = tvm.compute((n,), lambda i: tvm.sum(X[k], k), name="Y")
+    s = tvm.create_schedule([Y.op])
+    ax = s[Y.op].fuse(*(list(Y.op.axis) + list(Y.op.reduce_axis)))
+    f = tvm.build(s, [Y, X])
+
+    args = [tvm.ndarray.array(np.ones((n,), dtype='int32'))] + \
+        [tvm.ndarray.array(np.ones((n,), dtype='int32'))]
+    f(*args)
+    assert np.all(args[0].asnumpy() == n)
+
+def test_schedule_compute_inline():
+    shape = [10, 1024]
+    A = tvm.placeholder(shape, name="A")
+    B = tvm.placeholder(shape, name="B")
+    C = tvm.compute(shape, lambda *index:A(*index)+ B(*index), name = "C")
+    def _compute(*index) :
+        return C(*index) , C(*index) * B(*index)
+    F,E = tvm.compute(shape, _compute, name = "F")
+
+    s = tvm.create_schedule([F.op, E.op])
+    AL = s.cache_read(A, "local", [C])
+    BL = s.cache_read(B, "local", [C,E])
+    CL = s.cache_write(C, "local")
+    FL, EL = s.cache_write([F, E], "local")
+    s[C].compute_inline()
+
+    s = s.normalize()
+    bounds = tvm.schedule.InferBound(s)
+    stmt = tvm.schedule.ScheduleOps(s, bounds)
 
 if __name__ == "__main__":
     test_loop_dep_reduce()
@@ -456,3 +518,5 @@ if __name__ == "__main__":
     test_schedule_tensor_compute1()
     test_schedule_tensor_compute2()
     test_schedule_tensor_compute3()
+    test_reduction_and_dummy_fuse_split()
+    test_schedule_compute_inline()

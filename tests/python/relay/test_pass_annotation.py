@@ -1,4 +1,21 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 """Unit tests for heterogeneous compilation and execution."""
+import json
 import numpy as np
 
 import tvm
@@ -72,6 +89,7 @@ def test_annotate_all():
 
     annotated_func = relay.ir_pass.infer_type(annotated())
     expected_func = relay.ir_pass.infer_type(expected())
+    assert relay.ir_pass.alpha_equal(annotated_func, expected_func)
 
 def test_annotate_none():
     ctx1 = tvm.context(1)
@@ -203,7 +221,7 @@ def test_conv_network():
             for did in storage_dev_type[1]:
                 device_types.append(did.value)
         assert len(storage_ids) == 10
-        assert len(set(storage_ids)) == 7
+        assert len(set(storage_ids)) == 8
         assert len(set(device_types)) == 2
         assert set(device_types) == {1, 2}
 
@@ -213,7 +231,7 @@ def test_conv_network():
     check_storage_and_device_types()
 
 
-def test_fusible_network():
+def run_fusible_network(dev, tgt):
     R""" The network is as following:
                x     y
                 \   /
@@ -245,7 +263,8 @@ def test_fusible_network():
         func = relay.Function([x, y], exp)
         return func
 
-    def test_runtime(target, device, func, fallback_device=None):
+    def test_runtime(target, device, func, fallback_device=None,
+                     expected_index=None):
         params = {"x": x_data, "y": y_data}
         config = {"opt_level": 1}
         if fallback_device:
@@ -256,6 +275,10 @@ def test_fusible_network():
                 target,
                 params=params)
             contexts = [tvm.cpu(0), tvm.context(device)]
+            graph_json = json.loads(graph)
+            if "device_index" in graph_json["attrs"]:
+                device_index = graph_json["attrs"]["device_index"][1]
+                assert device_index == expected_index
             mod = graph_runtime.create(graph, lib, contexts)
             mod.set_input(**params)
             mod.run()
@@ -302,8 +325,12 @@ def test_fusible_network():
 
         annotated_func = annotated()
         expected_func = expected()
+        ctx = tvm.context(device, 0)
+        dev_idx = ctx.device_type
+        expected_index = [1, 1, 1, dev_idx, dev_idx, 1, 1, dev_idx, dev_idx]
         check_annotated_graph(annotated_func, expected_func)
-        test_runtime(target, device, annotated_func, fallback_device)
+        test_runtime(target, device, annotated_func, fallback_device,
+                     expected_index)
 
     def test_fuse_all(device, tgt):
         """Fuse all operators."""
@@ -344,6 +371,7 @@ def test_fusible_network():
         fallback_device = tvm.context("cpu")
         target = {"cpu": "llvm", device: tgt}
         cpu_ctx = fallback_device
+        dev_ctx = tvm.context(device)
 
         def annotated():
             add = relay.add(x, y)
@@ -357,15 +385,30 @@ def test_fusible_network():
                                   relay.Tuple(tvm.convert([_exp, exp])))
             func = relay.ir_pass.infer_type(func)
             func = relay.ir_pass.rewrite_annotated_ops(func,
-                                                       cpu_ctx.device_type)
+                                                       dev_ctx.device_type)
             func = relay.ir_pass.infer_type(func)
             return relay.Function(relay.ir_pass.free_vars(func.body[1]),
                                   func.body[1])
 
+        def expected():
+            add = relay.add(x, y)
+            sqrt = relay.sqrt(add)
+            log = relay.log(add)
+            subtract = relay.subtract(sqrt, log)
+            copy_sub_exp = relay.device_copy(subtract, dev_ctx, cpu_ctx)
+            exp = relay.exp(copy_sub_exp)
+
+            func = relay.Function([x, y], exp)
+            return func
+
         annotated_func = annotated()
-        expected_func = get_func()
+        expected_func = expected()
+        ctx = tvm.context(device, 0)
+        dev_idx = ctx.device_type
+        expected_index = [dev_idx, dev_idx, dev_idx, 1, 1]
         check_annotated_graph(annotated_func, expected_func)
-        test_runtime(target, device, annotated_func, fallback_device)
+        test_runtime(target, device, annotated_func, fallback_device,
+                     expected_index)
 
     def test_fallback_all_operators(device, tgt):
         target = {device: tgt}
@@ -374,20 +417,96 @@ def test_fusible_network():
         check_annotated_graph(annotated_func, expected_func)
         test_runtime(target, device, annotated_func)
 
+
+    test_fuse_log_add(dev, tgt)
+    test_fuse_all(dev, tgt)
+    test_fallback_exp(dev, tgt)
+    test_fallback_all_operators(dev, tgt)
+
+def run_unpropagatable_graph(dev, tgt):
+    R""" The network is as following:
+            a     b  c     d
+             \   /    \   /
+              add      mul
+                \      /
+                subtract
+    """
+    
+    a = relay.var("a", shape=(10, 10))
+    b = relay.var("b", shape=(10, 10))
+    c = relay.var("c", shape=(10, 10))
+    d = relay.var("d", shape=(10, 10))
+    a_data = np.random.rand(10, 10).astype('float32')
+    b_data = np.random.rand(10, 10).astype('float32')
+    c_data = np.random.rand(10, 10).astype('float32')
+    d_data = np.random.rand(10, 10).astype('float32')
+    tmp_add = a_data + b_data
+    tmp_mul = np.multiply(c_data, d_data)
+    ref_res = np.subtract(tmp_add, tmp_mul)
+    
+    fallback_device = tvm.context("cpu")
+    target = {"cpu": "llvm", dev: tgt}
+    cpu_ctx = fallback_device
+    dev_ctx = tvm.context(dev)
+    
+    def annotated():    
+        add = relay.add(a, b)
+        _add = relay.annotation.on_device(add, dev_ctx)
+        mul = relay.multiply(c, d)
+        _mul = relay.annotation.on_device(mul, cpu_ctx)
+        sub = relay.subtract(add, mul)
+        _sub = relay.annotation.on_device(sub, dev_ctx)
+        func = relay.Function([a, b, c, d],
+                              relay.Tuple(tvm.convert([_add, _mul,
+                                                       _sub, sub])))
+        func = relay.ir_pass.infer_type(func)
+        func = relay.ir_pass.rewrite_annotated_ops(func,
+                                                   dev_ctx.device_type)
+        func = relay.ir_pass.infer_type(func)
+        return relay.Function(relay.ir_pass.free_vars(func.body[3]),
+                              func.body[3])
+        
+    def expected():    
+        add = relay.add(a, b)
+        mul = relay.multiply(c, d)
+        copy_mul_sub = relay.device_copy(mul, cpu_ctx, dev_ctx)
+        sub = relay.subtract(add, copy_mul_sub)
+        func = relay.Function([a, b, c, d], sub)
+        return func
+    
+    annotated_func = annotated()
+    expected_func = expected()
+    expected_index = [2, 2, 2, 1, 1, 1, 2, 2]
+    check_annotated_graph(annotated_func, expected_func)
+    params = {"a": a_data, "b": b_data, "c": c_data, "d": d_data}
+    config = {"opt_level": 0}
+    config["fallback_device"] = fallback_device
+    with relay.build_config(**config):
+        graph, lib, params = relay.build(annotated_func, target, params=params)
+        contexts = [tvm.cpu(0), tvm.context(dev)]
+        graph_json = json.loads(graph)
+        if "device_index" in graph_json["attrs"]:
+            device_index = graph_json["attrs"]["device_index"][1]
+            assert device_index == expected_index
+        mod = graph_runtime.create(graph, lib, contexts)
+        mod.set_input(**params)
+        mod.run()
+        res = mod.get_output(0).asnumpy()
+        tvm.testing.assert_allclose(res, ref_res, rtol=1e-5, atol=1e-5)
+        
+def test_check_run():
     for dev, tgt in [("opencl", "opencl"), ("cuda", "cuda"),
-                     ("opencl", str(tvm.target.intel_graphics()))]:
+                 ("opencl", str(tvm.target.intel_graphics()))]:
         if not tvm.module.enabled(dev):
             print("Skip test because %s is not enabled." % dev)
             continue
-        test_fuse_log_add(dev, tgt)
-        test_fuse_all(dev, tgt)
-        test_fallback_exp(dev, tgt)
-        test_fallback_all_operators(dev, tgt)
+        run_fusible_network(dev, tgt)
+        run_unpropagatable_graph(dev, tgt)
 
-
+ 
 if __name__ == "__main__":
     test_redundant_annotation()
     test_annotate_all()
     test_annotate_none()
     test_conv_network()
-    test_fusible_network()
+    test_check_run()

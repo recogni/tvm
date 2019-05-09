@@ -1,8 +1,24 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 import numpy as np
 import tvm
 import tvm.testing
 from tvm import relay
-from tvm.relay.backend.interpreter import Value, TupleValue
+from tvm.relay.backend.interpreter import Value, TupleValue, TensorValue
 from tvm.relay.scope_builder import ScopeBuilder
 from tvm.relay import testing, create_executor
 
@@ -110,6 +126,22 @@ def test_loop():
     check_eval(sum_up, [i_data, accum_data], sum(range(1, 11)), mod=mod)
 
 
+def test_ref():
+    mod = relay.Module()
+    three_with_ref = relay.GlobalVar('three_with_ref')
+    i = relay.Var('i')
+    iv = relay.Var('iv')
+    u = relay.Var('u')
+    uv = relay.Var('uv')
+    body = relay.add(iv, uv)
+    body = relay.Let(uv, relay.RefRead(i), body)
+    body = relay.Let(u, relay.RefWrite(i, relay.const(2)), body)
+    body = relay.Let(iv, relay.RefRead(i), body)
+    body = relay.Let(i, relay.RefCreate(relay.const(1)), body)
+    mod[three_with_ref] = relay.Function([], body)
+    check_eval(three_with_ref, [], 3, mod=mod)
+
+
 def test_binds():
     x = relay.var("x")
     y = relay.add(x, x)
@@ -117,6 +149,12 @@ def test_binds():
     xx = np.ones((10, 20))
     res = intrp.evaluate(y, binds={x: xx}).asnumpy()
     tvm.testing.assert_allclose(xx + xx, res)
+
+
+def test_tensor_value():
+    x = relay.var("x", shape=(1, 10))
+    xx = np.ones((1, 10)).astype("float32")
+    check_eval(relay.Function([x], x), [TensorValue(xx)], xx)
 
 def test_kwargs_params():
     x = relay.var("x", shape=(1, 10))
@@ -131,6 +169,7 @@ def test_kwargs_params():
     res = intrp.evaluate(f)(x_data, **params).data
     tvm.testing.assert_allclose(res.asnumpy(), x_data + y_data + z_data)
 
+
 if __name__ == "__main__":
     test_id()
     test_add_const()
@@ -140,3 +179,5 @@ if __name__ == "__main__":
     test_loop()
     test_binds()
     test_kwargs_params()
+    test_ref()
+    test_tensor_value()

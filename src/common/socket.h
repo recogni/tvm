@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
  *  Copyright (c) 2017 by Contributors
  * \file socket.h
@@ -42,13 +61,13 @@ inline std::string GetHostName() {
 }
 
 /*!
- * \brief Common data structure fornetwork address.
+ * \brief Common data structure for network address.
  */
 struct SockAddr {
   sockaddr_storage addr;
   SockAddr() {}
   /*!
-   * \brief construc address by url and port
+   * \brief construct address by url and port
    * \param url The url of the address
    * \param port The port of the address.
    */
@@ -65,7 +84,7 @@ struct SockAddr {
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = PF_UNSPEC;
     hints.ai_flags = AI_PASSIVE;
-    hints.ai_protocol = SOCK_STREAM;
+    hints.ai_socktype = SOCK_STREAM;
     addrinfo *res = NULL;
     int sig = getaddrinfo(host, NULL, &hints, &res);
     CHECK(sig == 0 && res != NULL)
@@ -175,7 +194,8 @@ class Socket {
    */
   void Bind(const SockAddr &addr) {
     if (bind(sockfd, reinterpret_cast<const sockaddr*>(&addr.addr),
-             sizeof(addr.addr)) == -1) {
+             (addr.addr.ss_family == AF_INET6 ? sizeof(sockaddr_in6) :
+                                                sizeof(sockaddr_in))) == -1) {
       Socket::Error("Bind");
     }
   }
@@ -189,7 +209,8 @@ class Socket {
     for (int port = start_port; port < end_port; ++port) {
       SockAddr addr("0.0.0.0", port);
       if (bind(sockfd, reinterpret_cast<sockaddr*>(&addr.addr),
-               sizeof(addr.addr)) == 0) {
+               (addr.addr.ss_family == AF_INET6 ? sizeof(sockaddr_in6) :
+                                                  sizeof(sockaddr_in))) == 0) {
         return port;
       }
 #if defined(_WIN32)
@@ -371,7 +392,8 @@ class TCPSocket : public Socket {
    */
   bool Connect(const SockAddr &addr) {
     return connect(sockfd, reinterpret_cast<const sockaddr*>(&addr.addr),
-                   sizeof(addr.addr)) == 0;
+                   (addr.addr.ss_family == AF_INET6 ? sizeof(sockaddr_in6) :
+                                                      sizeof(sockaddr_in))) == 0;
   }
   /*!
    * \brief send data using the socket

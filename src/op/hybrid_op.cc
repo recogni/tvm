@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
  *  Copyright (c) 2019 by Contributors
  * \brief Hybrid computation rule.
@@ -7,11 +26,12 @@
 #include <tvm/arithmetic.h>
 #include <tvm/ir.h>
 #include <tvm/ir_mutator.h>
-#include <tvm/ir_operator.h>
 #include <tvm/ir_pass.h>
+#include <tvm/expr_operator.h>
 #include <ir/Expr.h>
 #include <unordered_set>
 #include <string>
+#include <utility>
 #include "op_util.h"
 #include "hybrid_op.h"
 
@@ -173,25 +193,28 @@ Stmt HybridOpNode::BuildProvide(
     rmap[outputs[i]] = stage->op.output(i);
   }
   auto n = make_node<HybridOpNode>(*this);
-  /*
-   * These two lines of codes replace tensors' reads & writes.
+  /* This is a story little bit complicated.
+   * The following two lines of codes replace output tensors' usage.
    * This is the simplest way I (@were) can come up with to glue
-   * hybrid scripts to the structure of TVM op.
-   * NAMING CONFLICT: In hybrid script all the tensors have their own 
-   * names specified by the users. However, In TVM op, all the output
-   * tensors' names are the same as the op's name. I cannot change the
-   * name to the op's name in the function body after the op node is
-   * formed, because:
-   *   1. Output tensors all point to the corresponding op node. 
-   *   2. Once OpNode is wrapped up by an Operation node, it can
-   *      no longer be changed.
+   * hybrid operation node to TVM op system.
+   * In hybrid script all the tensors, especially the output tensors,
+   * have their own names defined by the users. However, In TVM
+   * conventional ops:
+   *   1. Output tensors refer the corresponding op node so that the output
+   *      tensors have the same names as the operation produces them.
+   *   2. Once OpNode is wrapped up by an Operation node, it is finalized.
+   *      Later access will be from a const OpNode*.
    * This is a chiken-egg paradox. It is impossible to put the output
    * tensors into the function body without forming the op node. The
    * function body is immutable after the node is formed.
    *
    * Finally, I decided to resolve this issue "lazily". During the
-   * pipeline of compilation, these tensors will be replaced when
-   * forming the function body and passing to next stage of compilation.
+   * pipeline of compilation, this stage is a very preliminary stage.
+   * Technically, it is before Phase 0. The actual tensors will be replaced
+   * here.
+   * Thus, the operation body is slightly different from the Phase 0 body.
+   * This is a major difference that HybridOpNode is NOT the same as
+   * ExternOpNode.
    * */
   ret = op::ReplaceTensor(ret, rmap);
   ret = op::ReplaceProvideTensor(ret, rmap);
@@ -435,7 +458,7 @@ Stmt ApplySchedule(const Stage &stage,
   // Gather rebased variables
   std::unordered_map<IterVar, IterVar> rebased;
   for (auto rel : stage->relations) {
-    if (auto rebase = rel.as<RebaseNode>()) {
+    if (const auto* rebase = rel.as<RebaseNode>()) {
       rebased[rebase->rebased] = rebase->parent;
       CHECK(rebase->parent->dom.defined());
       CHECK(dom_map.count(rebase->rebased));

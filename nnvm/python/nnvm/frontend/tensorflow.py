@@ -1,8 +1,25 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 # pylint: disable=import-self, invalid-name, unused-argument, too-many-lines
 """TF: Tensorflow frontend."""
 from __future__ import absolute_import as _abs
 from __future__ import print_function
 
+import warnings
 # Numpy support
 import numpy as np
 
@@ -67,8 +84,8 @@ def _dimension_picker(prefix, surfix=''):
         kernel = attr['kernel_shape']
         if len(kernel) == 2:
             return prefix + '2d' + surfix
-        else:
-            raise NotImplementedError("Only 2d kernel supported.")
+        raise tvm.error.OpAttributeUnimplemented(
+            'Non-2D kernels are not supported for operator {}.'.format(prefix))
     return _impl
 
 def _dimension_constraint():
@@ -129,7 +146,8 @@ def _pooling(name):
             attr['kernel_shape'] = (attr['ksize'][2], attr['ksize'][3])
             attr['strides'] = (attr['strides'][2], attr['strides'][3])
         else:
-            raise TypeError("Unsupported data_format type : {}".format(attr['data_format']))
+            msg = 'Value {} in attribute "data_format" of operator Pooling is not valid.'
+            raise tvm.error.OpAttributeInvalid(msg.format(attr['data_format']))
 
         if attr['_target_layout'] == "NCHW" and attr['data_format'] == "NHWC":
             tmp_shape = attr['_input_shapes'][inputs[0]]
@@ -158,7 +176,8 @@ def _pooling(name):
 
             attr['padding'] = [pad_v[0], pad_h[0], pad_v[1], pad_h[1]]
         else:
-            raise TypeError("Unsupported padding type : {}".format(attr['padding']))
+            msg = 'Value {} in attribute "padding" of operator Pooling is not valid.'
+            raise tvm.error.OpAttributeUnimplemented(msg.format(attr['padding']))
 
         if name == "avg_pool":
             attr['count_include_pad'] = False
@@ -232,7 +251,8 @@ def _conv(opname):
                 attr['dilations'] = (attr['dilations'][2], attr['dilations'][3])
             attr['strides'] = (attr['strides'][2], attr['strides'][3])
         else:
-            raise TypeError("Unsupported data format type : {}".format(attr['data_format']))
+            msg = 'Value {} in attribute "data_format" of operator Conv is not valid.'
+            raise tvm.error.OpAttributeInvalid(msg.format(attr['data_format']))
 
 
         if opname == 'depthwise':
@@ -276,7 +296,8 @@ def _conv(opname):
             attr['padding'] = [0, 0]
 
         else:
-            raise TypeError("Unsupported padding type : {}".format(attr['padding']))
+            msg = 'Value {} in attribute "padding" of operator Conv is not valid.'
+            raise tvm.error.OpAttributeInvalid(msg.format(attr['padding']))
 
         if 'kernel_layout' not in attr:
             if opname == 'conv':
@@ -303,7 +324,8 @@ def _conv(opname):
 def _decode_image():
     def _impl(inputs, attr, params):
         # Image decode wrapper: Expecting user to feed decoded input to next layer drop this layer.
-        print("DecodeJpeg: It's a pass through, please handle preprocessing before input")
+        warnings.warn("DecodeJpeg: It's a pass through, "
+                      "please handle preprocessing before input")
         return inputs[0]
     return _impl
 
@@ -353,6 +375,11 @@ def _matmul():
                        extras={'use_bias': False, 'units': channels},
                        ignores=['transpose_a', 'transpose_b', 'T'])(inputs, attr)
 
+    return _impl
+
+def _undef():
+    def _impl(inputs, attr, params):
+        return _sym.__undef__()
     return _impl
 
 def _identity():
@@ -426,8 +453,8 @@ def _reshape():
                     op_name="reshape",
                     extras={'shape':tuple(params_new[0].asnumpy().flatten())},
                     ignores=['Tshape'])(inputs, attr)
-            else:
-                raise RuntimeError("Reshape with dynamic shape input not supported yet.")
+            raise tvm.error.OpAttributeUnimplemented(
+                'Attribute "dynamic shape" of operator Reshape is not supported.')
     return _impl
 
 def _bias_add():
@@ -731,7 +758,8 @@ def _pad(name):
         if padlist_key in params:
             padlist = params.pop(padlist_key).asnumpy()
         else:
-            raise RuntimeError("Required parameter {} not fount.".format(padlist_key))
+            raise tvm.error.OpAttributeRequired(
+                'Required attribute "{}" not found in operator Pad.'.format(padlist_key))
         paddings = tuple([tuple(l) for l in padlist])
         attr['pad_width'] = paddings
         attr['pad_value'] = 0
@@ -862,6 +890,11 @@ def _expand_dims_0d_aware(data, attr, axis, num_newaxis=1):
 
     return _sym.expand_dims(data, axis=axis, num_newaxis=num_newaxis)
 
+def _logical(name):
+    def _impl(inputs, attr, params):
+        return AttrCvt(op_name=name)(inputs, attr)
+    return _impl
+
 # compatible operators that do NOT require any conversion.
 _identity_list = []
 
@@ -924,6 +957,9 @@ _convert_map = {
     'Transpose'                         : _transpose(),
     'Tanh'                              : AttrCvt('tanh'),
     'Mean'                              : _mean(),
+    'LogicalAnd'                        : _logical('logical_and'),
+    'LogicalOr'                         : _logical('logical_or'),
+    'LogicalNot'                        : _logical('logical_not'),
     'Less'                              : _broadcast('less'),
     'Greater'                           : _broadcast('greater'),
     'LessEqual'                         : _broadcast('less_equal'),
@@ -1129,6 +1165,7 @@ class GraphProto(object):
         self._num_param = 0
         self._num_rnn_layer = False
         self._outputs_are_0d = {}
+        self._input_shapes = {}
 
     def from_tensorflow(self, graph, layout="NHWC", shape=None, outputs=None):
         """Construct nnvm nodes from tensorflow  graph definition - GraphDef.
@@ -1174,46 +1211,67 @@ class GraphProto(object):
         missing_operators = self._parse_import_prerequisites(graph)
 
         if missing_operators:
-            raise NotImplementedError( \
-                "The following operators are not implemented: {}".format(missing_operators))
+            msg = 'The following operators are not supported in frontend TensorFlow: {}'
+            ops = str(list(missing_operators)).strip('[,]')
+            raise tvm.error.OpNotImplemented(msg.format(ops))
+
+        for node in graph.node:
+            if node.op == 'Placeholder':
+                if shape and node.name in shape:
+                    self._input_shapes[node.name] = list(shape[node.name])
+                    continue
+                self._input_shapes[node.name] = \
+                    tensor_util.TensorShapeProtoToList(node.attr['shape'].shape)
+                for idx, dim in enumerate(self._input_shapes[node.name]):
+                    if dim < 0:
+                        self._input_shapes[node.name][idx] = 1
+                        warnings.warn("Use 1 instead of -1 in shape of operator %s."
+                                      % node.name)
+
+            # Ignore user's input shape for Non placeholder
+            elif node.op == 'Const':
+                tensor_value = node.attr['value'].tensor
+                self._input_shapes[node.name] = \
+                    tensor_util.TensorShapeProtoToList(tensor_value.tensor_shape)
+                if shape and node.name in shape:
+                    warnings.warn("Ignore the passed shape. "
+                                  "Shape in graphdef will be used for operator %s." % node.name)
 
         final_op = None
         # Parse the nodes to re-create TF graph using Symbol API of NNVM
         for node in graph.node:
-            # Tensorflow doesn't have seperate list for params extraction.
+            # Tensorflow doesn't have separate list for params extraction.
             # Operator name 'Const' is treated as a parameter to build NNVM params dict.
 
             input_shapes = {}
             input_0d_mismatch = set()
             attr = self._parse_attr(node.attr)
 
-            #Variable converted to Const will not have only value attr
+            #  Variable converted to Const will not have only value attr
             if 'value' in attr and node.op == 'Const':
-                tensor_value = attr['value']
-                self._output_shapes[node.name] = \
-                    [tensor_util.TensorShapeProtoToList( \
-                        tensor_value.tensor_shape)]
+                self._output_shapes[node.name] = [self._input_shapes[node.name]]
             elif shape and node.name in shape:
                 # Give priority to user argument.
                 self._output_shapes[node.name] = [shape[node.name]]
+            elif node.op == 'Placeholder':
+                self._output_shapes[node.name] = [self._input_shapes[node.name]]
             elif '_output_shapes' in attr:
                 self._output_shapes[node.name] = \
                     [tensor_util.TensorShapeProtoToList(tshape) \
                     for tshape in attr['_output_shapes']]
-            elif shape:
+            else:
                 # Keep the list indexable to avoid key error.
                 # Actual value will be filled after node creation.
+                # Will infer shapes if the graph is not frozen with add_shapes=True
                 self._output_shapes[node.name] = [None]
-            else:
-                raise NotImplementedError( \
-                    "Please freeze the graph with add_shapes=True")
+
             self._outputs_are_0d[node.name] = [ \
                 not tshape if isinstance(tshape, list) else False \
                 for tshape in self._output_shapes[node.name]]
 
             if node.op == "Placeholder":
                 self._nodes[node.name] = _sym.Variable(name=node.name,
-                                                       shape=self._output_shapes[node.name][0])
+                                                       shape=self._input_shapes[node.name])
 
             elif node.op == "Const":
                 # All Const nodes are Param nodes, lets parse
@@ -1228,7 +1286,7 @@ class GraphProto(object):
 
             else:
                 # Pass the parsed shapes instead
-                attr["_output_shapes"] = self._output_shapes[node.name]
+                attr["_output_shapes"] = output_shapes = self._output_shapes[node.name]
 
                 # Pass the node name too in attr
                 attr["_node_name"] = node.name
@@ -1269,7 +1327,7 @@ class GraphProto(object):
                 inputs = self._fix_extranodes(node.op, attr, inputs)
                 op = self._convert_operator(node.op, inputs, attr, graph)
 
-                # Check is op is converted to param
+                # Check if op is converted to param
                 if isinstance(op, np.ndarray):
                     self._params[node.name] = tvm.nd.array(op)
                     op = _sym.Variable(name=node.name,
@@ -1279,9 +1337,19 @@ class GraphProto(object):
                 self._nodes[node.name] = op
                 final_op = op
 
+                # Infer shapes even without specifying "add_shapes=True"
+                if output_shapes == [None]:
+                    g = _graph.create(final_op)
+                    self._output_shapes[node.name] = \
+                        list(graph_util.infer_shape(g, **self._input_shapes))[-1]
+
+                if self._output_shapes[node.name] and shape and node.name in shape:
+                    assert self._output_shapes[node.name] == list(shape[node.name])
+
             # Infer shapes if passed explicitely
             node_output = self._nodes[node.name]
-            if shape:
+            if shape and (not self._output_shapes[node.name][0]
+                          or -1 in self._output_shapes[node.name][0]):
                 g = _graph.create(node_output)
                 shape_dict = {k: v.shape for k, v in self._params.items()}
                 shape_dict.update(shape)
@@ -1356,7 +1424,7 @@ class GraphProto(object):
             self._nodes[name] = _sym.Variable(name=name,
                                               shape=self._params[name].shape)
         else:
-            if key != 'dtype' and key != '_output_shapes' and key != '_class':
+            if key not in ('dtype', '_output_shapes', '_class'):
                 raise NotImplementedError \
                     ("Other attributes for a Const(param) Node {} ? .".format(key))
 
@@ -1485,7 +1553,8 @@ class GraphProto(object):
                                              self._params, graph,
                                              convert_map_rnn)
         else:
-            raise NotImplementedError("Operator {} not implemented.".format(op_name))
+            raise tvm.error.OpNotImplemented(
+                'Operator {} is not supported in frontend TensorFlow.'.format(op_name))
         return sym
 
     def _fix_extranodes(self, op_name, attr, inputs):

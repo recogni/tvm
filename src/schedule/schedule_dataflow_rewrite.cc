@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 /*!
  *  Copyright (c) 2017 by Contributors
  * \file schedule_dataflow_rewrite.cc
@@ -544,7 +563,7 @@ void InjectInline(ScheduleNode* sch) {
         const ComputeOpNode* compute = s->op.as<ComputeOpNode>();
         if (compute) {
           if (!new_body[j].size()) {
-            new_body[j] = s->op.as<ComputeOpNode>()->body;
+            new_body[j] = compute->body;
           }
           if (new_body[j][0]->is_type<ir::Reduce>()) {
             // specially handle reduction inline for multiplre reductions.
@@ -603,8 +622,8 @@ void InjectInline(ScheduleNode* sch) {
       if (!op.same_as(s->op)) {
         for (int idx = 0; idx < s->op->num_outputs(); ++idx) {
           repl[s->op.output(idx)] = op.output(idx);
-          s->op = op;
         }
+        s->op = op;
       }
     } else {
       Operation op = s->op->ReplaceInputs(s->op, repl);

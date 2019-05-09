@@ -1,3 +1,20 @@
+..  Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+..    http://www.apache.org/licenses/LICENSE-2.0
+
+..  Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
 .. _hybrid-langref-label:
 
 Hybrid Frontend Language Reference
@@ -196,6 +213,20 @@ You can also do loop-thread bind by writing code like this:
    for tx in bind("threadIdx.x", 100):
        a[tx] = b[tx]
 
+
+Assert Statement
+~~~~~~~~~~~~~~~~
+
+Assert statement is supported, you can simply use it as it is in standard Python.
+
+.. code-block:: python
+
+    assert cond, mesg
+
+.. note::
+
+        ``Assert`` is NOT a function call. Users are encouraged to use assert in the way
+        presented above --- condition followed by message. It fits both Python AST and HalideIR.
 
 Keywords
 ~~~~~~~~

@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 """Internal utilities for parsing Python subset to HalideIR"""
 
 import ast
@@ -5,20 +21,20 @@ import inspect
 import logging
 import sys
 import numpy
-from .intrin import HYBRID_GLOBALS
-from .._ffi.base import numeric_types
 from .. import api as _api
 from .. import make as _make
 from .. import expr as _expr
 from .. import stmt as _stmt
-from ..container import Array
+from .._ffi.base import numeric_types
 from ..tensor import Tensor
+from ..container import Array
 
 
 #pylint: disable=invalid-name
 np_arg_types = tuple(list(numeric_types) + [numpy.ndarray])
 tvm_arg_types = (Tensor, Array, _expr.Var, _expr.ConstExpr)
 halide_imm_types = (_expr.IntImm, _expr.FloatImm, _expr.UIntImm)
+
 
 def _internal_assert(cond, err):
     """Simplify the code segment like if not XXX then raise an error"""
@@ -52,6 +68,23 @@ def _pruned_source(func):
             raise err
 
 
+def replace_io(body, rmap):
+    """Replacing tensors usage according to the dict given"""
+    from .. import ir_pass
+
+    def replace(op):
+        if isinstance(op, _stmt.Provide) and op.func in rmap.keys():
+            buf = rmap[op.func]
+            return _make.Provide(buf.op, op.value_index, op.value, op.args)
+        if isinstance(op, _expr.Call) and  op.func in rmap.keys():
+            buf = rmap[op.func]
+            return _make.Call(buf.dtype, buf.name, op.args, \
+                              _expr.Call.Halide, buf.op, buf.value_index)
+        return None
+
+    return ir_pass.IRTransform(body, None, replace, ['Provide', 'Call'])
+
+
 def _is_tvm_arg_types(args):
     """Determine a list of element is either a list of tvm arguments of a list of numpy arguments.
     If neither is true, raise a value error."""
@@ -68,40 +101,3 @@ def _is_tvm_arg_types(args):
         _internal_assert(isinstance(elem, np_arg_types), \
                          "Expect a numpy type but %s get!" % str(type(elem)))
     return False
-
-
-def _enter_hybrid_runtime(func):
-    """Put hybrid runtime variables into the global scope"""
-    _globals = func.__globals__
-    intersect = []
-    for elem in list(HYBRID_GLOBALS.keys()):
-        if elem in _globals.keys():
-            intersect.append((elem, _globals[elem]))
-        _globals[elem] = HYBRID_GLOBALS[elem]
-    return intersect
-
-
-def _restore_runtime(func, intersect):
-    """Rollback the modification caused by hybrid runtime"""
-    _globals = func.__globals__
-    for elem in list(HYBRID_GLOBALS.keys()):
-        _globals.pop(elem)
-    for k, v in intersect:
-        _globals[k] = v
-
-
-def replace_io(body, rmap):
-    """Replacing tensors usage according to the dict given"""
-    from .. import ir_pass
-
-    def replace(op):
-        if isinstance(op, _stmt.Provide) and op.func in rmap.keys():
-            buf = rmap[op.func]
-            return _make.Provide(buf.op, op.value_index, op.value, op.args)
-        elif isinstance(op, _expr.Call) and  op.func in rmap.keys():
-            buf = rmap[op.func]
-            return _make.Call(buf.dtype, buf.name, op.args, \
-                              _expr.Call.Halide, buf.op, buf.value_index)
-        return None
-
-    return ir_pass.IRTransform(body, None, replace, ['Provide', 'Call'])
