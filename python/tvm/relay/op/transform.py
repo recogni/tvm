@@ -218,9 +218,10 @@ def take(data, indices, axis=None, mode="clip"):
         the flattened input array is used.
 
     mode : str, optional
-        Specifies how out-of-bound indices will behave.
-        clip - clip to the range (default)
-        wrap - wrap around the indices
+        Specifies how out-of-bound indices will behave [clip, wrap, fast].
+        clip: clip to the range (default).
+        wrap: wrap around the indices.
+        fast: no clip or wrap around (user must make sure indices are in-bound).
 
     Returns
     -------
@@ -313,28 +314,6 @@ def arange(start, stop=None, step=1, dtype="float32"):
         stop = start
         start = 0
     return _make.arange(start, stop, step, dtype)
-
-
-def stack(data, axis):
-    """Join a sequence of arrays along a new axis.
-
-    Parameters
-    ----------
-    data : relay.Expr
-        The input data to the operator.
-
-    axis : int
-        The axis in the result array along which the input arrays are stacked.
-
-    .. note::
-        Each array in the input array sequence must have the same shape.
-
-    Returns
-    -------
-    ret : relay.Expr
-        The computed result.
-    """
-    return _make.stack(data, axis)
 
 
 def repeat(data, repeats, axis):
@@ -698,5 +677,4 @@ def gather_nd(data, indices):
         indices = [[0, 1], [1, 0]]
         relay.gather_nd(data, indices) = [[3, 4], [5, 6]]
     """
-
     return _make.gather_nd(data, indices)

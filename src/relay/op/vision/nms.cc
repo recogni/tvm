@@ -50,9 +50,13 @@ bool GetValidCountRel(const Array<Type>& types,
 }
 
 Expr MakeGetValidCounts(Expr data,
-                        double score_threshold) {
+                        double score_threshold,
+                        int id_index,
+                        int score_index) {
   auto attrs = make_node<GetValidCountsAttrs>();
   attrs->score_threshold = score_threshold;
+  attrs->id_index = id_index;
+  attrs->score_index = score_index;
   static const Op& op = Op::Get("vision.get_valid_counts");
   return CallNode::make(op, {data}, Attrs(attrs), {});
 }
@@ -106,6 +110,8 @@ Expr MakeNMS(Expr data,
              double iou_threshold,
              bool force_suppress,
              int top_k,
+             int coord_start,
+             int score_index,
              int id_index,
              bool return_indices,
              bool invalid_to_bottom) {
@@ -114,6 +120,8 @@ Expr MakeNMS(Expr data,
   attrs->iou_threshold = iou_threshold;
   attrs->force_suppress = force_suppress;
   attrs->top_k = top_k;
+  attrs->coord_start = coord_start;
+  attrs->score_index = score_index;
   attrs->id_index = id_index;
   attrs->return_indices = return_indices;
   attrs->invalid_to_bottom = invalid_to_bottom;

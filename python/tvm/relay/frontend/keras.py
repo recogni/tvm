@@ -18,8 +18,8 @@
 """Keras frontend."""
 from __future__ import absolute_import as _abs
 import sys
-import tvm
 import numpy as np
+import tvm
 from .. import ir_pass
 from .. import expr as _expr
 from .. import op as _op
@@ -203,7 +203,6 @@ def _convert_convolution(inexpr, keras_layer, etab):
     else:
         kernel_h, kernel_w, in_channels, n_filters = weightList[0].shape
         weight = weightList[0].transpose([3, 2, 0, 1])
-    dilation = [1, 1]
     if isinstance(keras_layer.dilation_rate, (list, tuple)):
         dilation = [keras_layer.dilation_rate[0], keras_layer.dilation_rate[1]]
     else:

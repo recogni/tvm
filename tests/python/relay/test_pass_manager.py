@@ -22,6 +22,7 @@ from tvm import relay
 from tvm.relay import ExprFunctor
 from tvm.relay import Function, Call
 from tvm.relay import ir_pass
+from tvm.relay import transform as _transform
 from tvm.relay.testing import ctx_list
 
 
@@ -126,13 +127,13 @@ def test_module_pass():
     opt_tester = OptTester(mod)
     pass_ctx = None
 
-    @ir_pass.module_pass(opt_level=opt_level, name=pass_name)
+    @_transform.module_pass(opt_level=opt_level, name=pass_name)
     def transform(expr, ctx):
         return opt_tester.transform(expr, ctx)
 
     def test_pass_registration():
         mod_pass = transform
-        assert isinstance(mod_pass, ir_pass.ModulePass)
+        assert isinstance(mod_pass, _transform.ModulePass)
         pass_info = mod_pass.info
         assert pass_info.name == pass_name
         assert pass_info.opt_level == opt_level
@@ -140,8 +141,8 @@ def test_module_pass():
     def test_pass_registration_no_decorator():
         def direct_transform(expr, ctx):
             return opt_tester.transform(expr, ctx)
-        mod_pass = ir_pass.module_pass(direct_transform, opt_level=3)
-        assert isinstance(mod_pass, ir_pass.ModulePass)
+        mod_pass = _transform.module_pass(direct_transform, opt_level=3)
+        assert isinstance(mod_pass, _transform.ModulePass)
         pass_info = mod_pass.info
         assert pass_info.name == "direct_transform"
         assert pass_info.opt_level == 3
@@ -202,8 +203,8 @@ def test_function_pass():
     opt_tester = OptTester(mod)
     pass_ctx = None
 
-    @ir_pass.function_pass(opt_level=opt_level, name=pass_name)
-    def transform(expr, ctx):
+    @_transform.function_pass(opt_level=opt_level, name=pass_name)
+    def transform(expr, mod, ctx):
         return opt_tester.transform(expr, ctx)
 
     def get_ref_log():
@@ -212,7 +213,7 @@ def test_function_pass():
 
     def test_pass_registration():
         function_pass = transform
-        assert isinstance(function_pass, ir_pass.FunctionPass)
+        assert isinstance(function_pass, _transform.FunctionPass)
         pass_info = function_pass.info
         assert pass_info.name == pass_name
         assert pass_info.opt_level == opt_level
@@ -220,8 +221,8 @@ def test_function_pass():
     def test_pass_registration_no_decorator():
         def direct_transform(expr, ctx):
             return opt_tester.transform(expr, ctx)
-        mod_pass = ir_pass.function_pass(direct_transform, opt_level=0)
-        assert isinstance(mod_pass, ir_pass.FunctionPass)
+        mod_pass = _transform.function_pass(direct_transform, opt_level=0)
+        assert isinstance(mod_pass, _transform.FunctionPass)
         pass_info = mod_pass.info
         assert pass_info.name == "direct_transform"
         assert pass_info.opt_level == 0
@@ -256,6 +257,12 @@ def test_function_pass():
     test_pass_registration()
     test_pass_registration_no_decorator()
     test_pass_run()
+
+
+def test_pass_info():
+    info = relay.transform.PassInfo(opt_level=1, name="xyz")
+    assert info.opt_level == 1
+    assert info.name == "xyz"
 
 
 def test_sequential_pass():
@@ -294,15 +301,15 @@ def test_sequential_pass():
     opt_tester = OptTester(mod)
     pass_ctx = None
 
-    @ir_pass.module_pass(opt_level=1)
+    @_transform.module_pass(opt_level=1)
     def mod_transform(expr, ctx):
         return opt_tester.transform(expr, ctx)
 
     module_pass = mod_transform
 
     # Register a function pass.
-    @ir_pass.function_pass(opt_level=1)
-    def func_transform(expr, ctx):
+    @_transform.function_pass(opt_level=1)
+    def func_transform(expr, mod, ctx):
         return opt_tester.transform(expr, ctx)
 
     function_pass = func_transform
@@ -310,25 +317,24 @@ def test_sequential_pass():
     def test_pass_registration():
         passes = [module_pass, function_pass]
         opt_level = 2
-        pass_name = "sequential_pass"
-        sequential_pass = ir_pass.sequential_pass(passes=passes,
-                                                  opt_level=opt_level)
-        assert isinstance(sequential_pass, ir_pass.SequentialPass)
-        pass_info = sequential_pass.info
+        pass_name = "sequential"
+        sequential = _transform.Sequential(passes=passes, opt_level=opt_level)
+        pass_info = sequential.info
         assert pass_info.name == pass_name
         assert pass_info.opt_level == opt_level
 
     def test_no_pass():
         passes = []
-        sequential_pass = ir_pass.sequential_pass(opt_level=1, passes=passes)
-        ret_mod = sequential_pass(mod)
+        sequential = _transform.Sequential(opt_level=1, passes=passes)
+        ret_mod = sequential(mod)
         mod_func = ret_mod[v_sub]
         check_func(sub, mod_func)
 
     def test_only_module_pass():
         passes = [module_pass]
-        sequential_pass = ir_pass.sequential_pass(opt_level=1, passes=passes)
-        ret_mod = sequential_pass(mod)
+        sequential = _transform.Sequential(opt_level=1, passes=passes)
+        with relay.build_config(required_pass=["mod_transform"]):
+            ret_mod = sequential(mod)
         # Check the subtract function.
         sub_var, new_sub = extract_var_func(ret_mod, v_sub.name_hint)
         check_func(new_sub, sub)
@@ -341,8 +347,9 @@ def test_sequential_pass():
     def test_only_function_pass():
         # Check the subtract function.
         passes = [function_pass]
-        sequential_pass = ir_pass.sequential_pass(opt_level=1, passes=passes)
-        ret_mod = sequential_pass(mod)
+        sequential = _transform.Sequential(opt_level=1, passes=passes)
+        with relay.build_config(required_pass=["func_transform"]):
+            ret_mod = sequential(mod)
         _, new_sub = extract_var_func(ret_mod, v_sub.name_hint)
         check_func(new_sub, get_ref_sub())
 
@@ -355,8 +362,10 @@ def test_sequential_pass():
         # function pass.
         mod = relay.Module({v_sub: sub, v_log: log})
         passes = [module_pass, function_pass]
-        sequential_pass = ir_pass.sequential_pass(opt_level=1, passes=passes)
-        ret_mod = sequential_pass(mod)
+        sequential = _transform.Sequential(opt_level=1, passes=passes)
+        required = ["mod_transform", "func_transform"]
+        with relay.build_config(required_pass=required):
+            ret_mod = sequential(mod)
 
         # Check the abs function is added.
         abs_var, abs_func = get_var_func()
@@ -401,7 +410,49 @@ def test_sequential_pass():
     test_multiple_passes()
 
 
+def test_sequential_with_scoping():
+    shape = (1, 2, 3)
+    c_data = np.array(shape).astype("float32")
+    tp = relay.TensorType(shape, "float32")
+    def before():
+        c = relay.const(c_data)
+        x = relay.var("x", tp)
+        y = relay.add(c, c)
+        y = relay.multiply(y, relay.const(2, "float32"))
+        y = relay.add(x, y)
+        z = relay.add(y, c)
+        z1 = relay.add(y, c)
+        z2 = relay.add(z, z1)
+        return relay.Function([x], z2)
+
+    def expected():
+        x = relay.var("x", tp)
+        c_folded = (c_data + c_data) * 2
+        y = relay.add(x, relay.const(c_folded))
+        z = relay.add(y, relay.const(c_data))
+        z1 = relay.add(z, z)
+        return relay.Function([x], z1)
+
+    seq = _transform.Sequential([
+        relay.transform.InferType(),
+        relay.transform.FoldConstant(),
+        relay.transform.EliminateCommonSubexpr(),
+        relay.transform.AlterOpLayout()
+    ])
+
+    mod = relay.Module({"main": before()})
+    with relay.build_config(opt_level=3):
+        with tvm.target.create("llvm"):
+            mod = seq(mod)
+
+    zz = mod["main"]
+    zexpected = ir_pass.infer_type(expected())
+    assert relay.ir_pass.alpha_equal(zz, zexpected)
+
+
 if __name__ == "__main__":
     test_module_pass()
     test_function_pass()
     test_sequential_pass()
+    test_sequential_with_scoping()
+    test_pass_info()

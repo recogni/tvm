@@ -6,9 +6,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -29,40 +29,16 @@ make cython3
 echo "Running relay TFLite frontend test..."
 python3 -m nose -v tests/python/frontend/tflite
 
-echo "Running nnvm unittest..."
-python3 -m nose -v nnvm/tests/python/unittest
-
-echo "Running nnvm compiler test..."
-python3 -m nose -v nnvm/tests/python/compiler
-
-echo "Running nnvm ONNX frontend test..."
-python3 -m nose -v nnvm/tests/python/frontend/onnx
-
-echo "Running nnvm MXNet frontend test..."
-python3 -m nose -v nnvm/tests/python/frontend/mxnet
-
-echo "Running nnvm Keras frontend test..."
-python3 -m nose -v nnvm/tests/python/frontend/keras
-
-echo "Running nnvm Tensorflow frontend test..."
-python3 -m nose -v nnvm/tests/python/frontend/tensorflow
-
-echo "Running nnvm CoreML frontend test..."
-python3 -m nose -v nnvm/tests/python/frontend/coreml
-
-echo "Running nnvm DarkNet frontend test..."
-python3 -m nose -v nnvm/tests/python/frontend/darknet || exit -1
-
 echo "Running relay MXNet frontend test..."
 python3 -m nose -v tests/python/frontend/mxnet
 
 echo "Running relay Keras frontend test..."
 python3 -m nose -v tests/python/frontend/keras
 
-echo "Running relay ONNX frondend test..."
+echo "Running relay ONNX frontend test..."
 python3 -m nose -v tests/python/frontend/onnx
 
-echo "Running relay CoreML frondend test..."
+echo "Running relay CoreML frontend test..."
 python3 -m nose -v tests/python/frontend/coreml
 
 echo "Running nnvm to relay frontend test..."
@@ -71,5 +47,8 @@ python3 -m nose -v tests/python/frontend/nnvm_to_relay
 echo "Running relay Tensorflow frontend test..."
 python3 -m nose -v tests/python/frontend/tensorflow
 
-echo "Running relay caffe2 frondend test..."
+echo "Running relay caffe2 frontend test..."
 python3 -m nose -v tests/python/frontend/caffe2
+
+echo "Running relay DarkNet frontend test..."
+python3 -m nose -v tests/python/frontend/darknet

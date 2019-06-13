@@ -196,6 +196,9 @@ tvm_t.*
 .pytest_cache
 .local
 
+# Visual Studio Code
+.vscode
+
 # tmp file
 .nfs*
 
@@ -213,3 +216,11 @@ patched.txt
 # Python type checking
 .mypy_cache/
 .pyre/
+
+# pipenv file
+Pipfile
+Pipfile.lock
+
+# conda package artifacts
+conda/Dockerfile.cuda*
+conda/pkg

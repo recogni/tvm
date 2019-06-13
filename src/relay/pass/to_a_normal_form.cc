@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -26,6 +26,7 @@
  */
 #include <tvm/relay/pass.h>
 #include <tvm/relay/expr_functor.h>
+#include <tvm/logging.h>
 #include "let_list.h"
 #include "../../common/arena.h"
 #include "pass_util.h"
@@ -34,7 +35,9 @@
 namespace tvm {
 namespace relay {
 
-Expr ToANormalForm(const Expr& e, const Module& m, std::set<GlobalVar>* gv);
+Expr ToANormalForm(const Expr& e,
+                   const Module& m,
+                   std::unordered_set<GlobalVar, NodeHash, NodeEqual>* gv);
 
 struct ScopeNode;
 using Scope = std::shared_ptr<ScopeNode>;
@@ -104,7 +107,7 @@ class Fill : ExprFunctor<Expr(const Expr&, const Var&)> {
                             const Module& m,
                             const DependencyGraph& dg,
                             std::unordered_map<DependencyGraph::Node*, Scope>* node_scope,
-                            std::set<GlobalVar>* gv) {
+                            std::unordered_set<GlobalVar, NodeHash, NodeEqual>* gv) {
     Fill fi(m, dg, node_scope, gv);
     return fi.GetScope(e)->ll->Get(fi.VisitExpr(e));
   }
@@ -113,13 +116,13 @@ class Fill : ExprFunctor<Expr(const Expr&, const Var&)> {
   Module mod_;
   const DependencyGraph& dg_;
   std::unordered_map<DependencyGraph::Node*, Scope>* node_scope_;
-  std::set<GlobalVar>* visited_;
+  std::unordered_set<GlobalVar, NodeHash, NodeEqual>* visited_;
   std::unordered_map<Expr, Expr, NodeHash, NodeEqual> memo;
 
   Fill(Module mod,
        const DependencyGraph& dg,
        std::unordered_map<DependencyGraph::Node*, Scope>* node_scope,
-       std::set<GlobalVar>* visited) :
+       std::unordered_set<GlobalVar, NodeHash, NodeEqual>* visited) :
     mod_(mod),
     dg_(dg),
     node_scope_(node_scope),
@@ -273,7 +276,9 @@ class Fill : ExprFunctor<Expr(const Expr&, const Var&)> {
   }
 };
 
-Expr ToANormalFormAux(const Expr& e, const Module& m, std::set<GlobalVar>* gv) {
+Expr ToANormalFormAux(const Expr& e,
+                      const Module& m,
+                      std::unordered_set<GlobalVar, NodeHash, NodeEqual>* gv) {
   /* When you lift a lambda, what is inside is also being lift.
    *
    * So we must determine the scope of the lambda before determining the scope of it's body.
@@ -299,17 +304,49 @@ Expr ToANormalFormAux(const Expr& e, const Module& m, std::set<GlobalVar>* gv) {
   return Fill::ToANormalForm(e, m, dg, &node_scope, gv);
 }
 
-Expr ToANormalForm(const Expr& e, const Module& m, std::set<GlobalVar>* gv) {
-  return TransformF([&](const Expr& e) { return ToANormalFormAux(e, m, gv); }, e);
+Expr ToANormalForm(const Expr& e,
+                   const Module& m,
+                   std::unordered_set<GlobalVar, NodeHash, NodeEqual>* gv) {
+  DLOG(INFO)
+  << "ToANF:" << std::endl
+  << AsText(e, false);
+
+  Expr ret =
+    TransformF([&](const Expr& e) {
+      return ToANormalFormAux(e, m, gv);
+    }, e);
+
+  CHECK_EQ(FreeVars(ret).size(), 0);
+
+  DLOG(INFO)
+    << "ToANF: transformed" << std::endl
+    << AsText(ret, false);
+
+  return ret;
 }
 
 Expr ToANormalForm(const Expr& e, const Module& m) {
-  std::set<GlobalVar> gv;
+  std::unordered_set<GlobalVar, NodeHash, NodeEqual> gv;
   return ToANormalForm(e, m, &gv);
 }
 
 TVM_REGISTER_API("relay._ir_pass.to_a_normal_form")
 .set_body_typed(static_cast<Expr (*)(const Expr&, const Module&)>(ToANormalForm));
+
+namespace transform {
+
+Pass ToANormalForm() {
+  runtime::TypedPackedFunc<Function(Function, Module, PassContext)> pass_func =
+    [=](Function f, Module m, PassContext pc) {
+    return Downcast<Function>(ToANormalForm(f, m));
+  };
+  return CreateFunctionPass(pass_func, 1, "ToANormalForm", {});
+}
+
+TVM_REGISTER_API("relay._transform.ToANormalForm")
+.set_body_typed(ToANormalForm);
+
+}  // namespace transform
 
 }  // namespace relay
 }  // namespace tvm

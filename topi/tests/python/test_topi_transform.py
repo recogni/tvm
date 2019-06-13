@@ -127,7 +127,7 @@ def verify_concatenate(shapes, axis):
             return
         print("Running on target: %s" % device)
         with tvm.target.create(device):
-            s = topi.generic.schedule_injective(out_tensor)
+            s = topi.generic.schedule_concatenate(out_tensor)
 
         foo = tvm.build(s, tensor_l + [out_tensor], device, name="concatenate")
         data_npys = [np.random.normal(size=shape).astype(tensor_l[0].dtype) for shape in shapes]
@@ -275,9 +275,11 @@ def verify_take(src_shape, indices_src, axis=None, mode="clip"):
         data_npy = np.arange(shape_size, dtype=src_dtype).reshape((src_shape))
 
         if axis is None:
-            out_npys = np.take(data_npy, indices_src, mode=mode)
+            np_mode = "raise" if mode == "fast" else mode
+            out_npys = np.take(data_npy, indices_src, mode=np_mode)
         else:
-            out_npys = np.take(data_npy, indices_src, axis=axis, mode=mode)
+            np_mode = "raise" if mode == "fast" else mode
+            out_npys = np.take(data_npy, indices_src, axis=axis, mode=np_mode)
         data_nd = tvm.nd.array(data_npy, ctx)
         indices_nd = tvm.nd.array(indices_src, ctx)
         out_nd = tvm.nd.empty(out_npys.shape, ctx=ctx, dtype=src_dtype)
@@ -476,6 +478,7 @@ def test_concatenate():
                         (12, 6, 7, 3),
                         (8, 6, 7, 3),
                         (2, 6, 7, 3)], 0)
+    verify_concatenate([(1, 14400), (1, 2400), (1, 640), (1, 240)], 1)
 
 
 def test_stack():
@@ -520,6 +523,9 @@ def test_take():
     verify_take((3,4), [-1, 2], axis=0, mode="wrap")
     verify_take((3,4), [-1, 2], axis=1)
     verify_take((3,4), [-1, 2], axis=1, mode="wrap")
+    verify_take((3,3,3), [[11,25]], mode="fast")
+    verify_take((3,4), [0, 2], axis=0, mode="fast")
+    verify_take((3,4), [0, 2], axis=1, mode="fast")
 
 def test_gather_nd():
     for indices_dtype in ['int32', 'float32']:

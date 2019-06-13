@@ -48,7 +48,7 @@ def test_resize():
         if method == "BILINEAR":
             ref_res = topi.testing.bilinear_resize_python(x_data, size, layout)
         else:
-            ref_res = topi.testing.upsampling_python(x_data, scale, layout)
+            ref_res = topi.testing.upsampling_python(x_data, (scale, scale), layout)
         x = relay.var("x", relay.TensorType(dshape, "float32"))
         z = relay.image.resize(x, size, layout, method, False)
         assert "size=" in z.astext()
@@ -152,42 +152,43 @@ def test_multibox_prior():
 
 
 def test_get_valid_counts():
-    def verify_get_valid_counts(dshape, score_threshold):
+    def verify_get_valid_counts(dshape, score_threshold, id_index, score_index):
         dtype = "float32"
         batch_size, num_anchor, elem_length = dshape
-        np_data = np.random.uniform(size=dshape).astype(dtype)
+        np_data = np.random.uniform(low=-2, high=2, size=dshape).astype(dtype)
         np_out1 = np.zeros(shape=(batch_size,))
         np_out2 = np.zeros(shape=dshape).astype(dtype)
         for i in range(batch_size):
             np_out1[i] = 0
             inter_idx = 0
             for j in range(num_anchor):
-                score = np_data[i, j, 1]
-                if score >= score_threshold:
+                score = np_data[i, j, score_index]
+                if score > score_threshold and (id_index < 0 or np_data[i, j, id_index] >= 0):
                     for k in range(elem_length):
                         np_out2[i, inter_idx, k] = np_data[i, j, k]
                     np_out1[i] += 1
                     inter_idx += 1
                 if j >= np_out1[i]:
                     for k in range(elem_length):
-                        np_out2[i, j, k] = -1
+                        np_out2[i, j, k] = -1.0
 
         x = relay.var("x", relay.ty.TensorType(dshape, dtype))
-        z = relay.vision.get_valid_counts(x, score_threshold)
+        z = relay.vision.get_valid_counts(x, score_threshold, id_index, score_index)
         assert "score_threshold" in z.astext()
         func = relay.Function([x], z.astuple())
         func = relay.ir_pass.infer_type(func)
-        ctx_list = [("llvm", tvm.cpu(0))]
-        for target, ctx in ctx_list:
+        for target, ctx in ctx_list():
+            if target == 'cuda':
+                return
             intrp = relay.create_executor("debug", ctx=ctx, target=target)
             out = intrp.evaluate(func)(np_data)
-            tvm.testing.assert_allclose(out[0].asnumpy(), np_out1, rtol=1e-3)
-            tvm.testing.assert_allclose(out[1].asnumpy(), np_out2, rtol=1e-3)
+            tvm.testing.assert_allclose(out[0].asnumpy(), np_out1, rtol=1e-3, atol=1e-04)
+            tvm.testing.assert_allclose(out[1].asnumpy(), np_out2, rtol=1e-3, atol=1e-04)
 
-    verify_get_valid_counts((1, 2500, 6), 0)
-    verify_get_valid_counts((1, 2500, 6), -1)
-    verify_get_valid_counts((3, 1000, 6), 0.55)
-    verify_get_valid_counts((16, 500, 6), 0.95)
+    verify_get_valid_counts((1, 2500, 6), 0, 0, 1)
+    verify_get_valid_counts((1, 2500, 5), -1, -1, 0)
+    verify_get_valid_counts((3, 1000, 6), 0.55, 1, 0)
+    verify_get_valid_counts((16, 500, 5), 0.95, -1, 0)
 
 
 def test_non_max_suppression():
@@ -195,9 +196,13 @@ def test_non_max_suppression():
                    iou_threshold=0.5, force_suppress=False, top_k=-1,
                    check_type_only=False):
         x0 = relay.var("x0", relay.ty.TensorType(dshape, "float32"))
-        x1 = relay.var("x1", relay.ty.TensorType((dshape[0],), "int"))
-        z = relay.vision.non_max_suppression(x0, x1, -1, iou_threshold, force_suppress, top_k, return_indices=False)
-        z_indices = relay.vision.non_max_suppression(x0, x1, -1, iou_threshold, force_suppress, top_k)
+        x1 = relay.var("x1", relay.ty.TensorType((dshape[0],), "int32"))
+        z = relay.vision.non_max_suppression(x0, x1, max_output_size = -1, \
+            iou_threshold = iou_threshold, force_suppress = force_suppress, \
+            top_k = top_k, return_indices=False)
+        z_indices = relay.vision.non_max_suppression(x0, x1, max_output_size = -1, \
+                    iou_threshold = iou_threshold, force_suppress = force_suppress, \
+                    top_k = top_k)
         assert "iou_threshold" in z.astext()
         assert "iou_threshold" in z_indices.astext()
         zz = relay.ir_pass.infer_type(z)
@@ -212,8 +217,7 @@ def test_non_max_suppression():
         func = relay.ir_pass.infer_type(func)
         func_indices = relay.Function([x0, x1], z_indices)
         func_indices = relay.ir_pass.infer_type(func_indices)
-        ctx_list = [("llvm", tvm.cpu(0))]
-        for target, ctx in ctx_list:
+        for target, ctx in ctx_list():
             intrp1 = relay.create_executor("graph", ctx=ctx, target=target)
             op_res1 = intrp1.evaluate(func)(x0_data, x1_data)
             op_indices_res1 = intrp1.evaluate(func_indices)(x0_data, x1_data)
@@ -296,8 +300,7 @@ def test_multibox_transform_loc():
         nms = relay.vision.non_max_suppression(mtl[0], mtl[1], return_indices=False)
         func = relay.Function([cls_prob, loc_pred, anchors], nms)
         func = relay.ir_pass.infer_type(func)
-        ctx_list = [("llvm", tvm.cpu(0))]
-        for target, ctx in ctx_list:
+        for target, ctx in ctx_list():
             intrp1 = relay.create_executor("graph", ctx=ctx, target=target)
             op_res1 = intrp1.evaluate(func)(np_cls_prob, np_loc_preds,
                                             np_anchors)

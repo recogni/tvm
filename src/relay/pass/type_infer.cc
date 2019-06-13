@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -43,6 +43,7 @@
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/pattern_functor.h>
 #include <tvm/relay/pass.h>
+#include <tvm/relay/transform.h>
 #include "./pass_util.h"
 #include "type_solver.h"
 #include "../ir/type_functor.h"
@@ -796,7 +797,10 @@ Function InferType(const Function& func,
   CHECK(WellFormed(func_ret));
   auto free_tvars = FreeTypeVars(func_ret, mod);
   CHECK(free_tvars.size() == 0)
-    << "Found unbound type variables in " << func << ": " << free_tvars;
+    << "Found unbound type variables in: "
+    << std::endl
+    << AsText(func, true)
+    << std::endl << free_tvars;
   return Downcast<Function>(func_ret);
 }
 
@@ -804,5 +808,23 @@ TVM_REGISTER_API("relay._ir_pass.infer_type")
 .set_body_typed<Expr(const Expr&, const Module&)>([](const Expr& expr, const Module& mod_ref) {
     return InferType(expr, mod_ref);
   });
+
+namespace transform {
+
+Pass InferType() {
+  runtime::TypedPackedFunc<Function(Function, Module, PassContext)> pass_func =
+    [=](Function f, Module m, PassContext pc) {
+      return Downcast<Function>(InferType(f, m));
+  };
+  return CreateFunctionPass(pass_func, 0, "InferType", {});
+}
+
+TVM_REGISTER_API("relay._transform.InferType")
+.set_body_typed<Pass()>([]() {
+  return InferType();
+});
+
+}  // namespace transform
+
 }  // namespace relay
 }  // namespace tvm

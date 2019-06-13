@@ -67,7 +67,7 @@ def conv2d(data,
         The weight expressions.
 
     strides : tuple of int, optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : tuple of int, optional
         The padding of convolution on both sides of inputs before convolution.
@@ -129,7 +129,7 @@ def conv2d_transpose(data,
         The weight expressions.
 
     strides : Tuple[int], optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : Tuple[int], optional
         The padding of convolution on both sides of inputs.
@@ -401,7 +401,7 @@ def upsampling(data,
     with data of shape (n, c, h, w)
     out will have a shape (n, c, h*scale, w*scale)
 
-    method indicates the algorithm to be used while calculating ghe out value
+    method indicates the algorithm to be used while calculating the out value
     and method can be one of ("BILINEAR", "NEAREST_NEIGHBOR")
 
     Parameters
@@ -475,7 +475,7 @@ def bias_add(data, bias, axis=1):
     return _make.bias_add(data, bias, axis)
 
 
-def dense(data, weight, units=None):
+def dense(data, weight, units=None, out_dtype=""):
     """Dense operator.
     Applies a linear transformation
 
@@ -494,12 +494,15 @@ def dense(data, weight, units=None):
     units : int, optional
         Number of hidden units of the dense transformation.
 
+    out_dtype : str, optional
+        Specifies the output data type for mixed precision dense.
+
     Returns
     -------
     result : tvm.relay.Expr
         The computed result.
     """
-    return _make.dense(data, weight, units)
+    return _make.dense(data, weight, units, out_dtype)
 
 
 def relu(data):
@@ -839,7 +842,7 @@ def contrib_conv2d_winograd_without_weight_transform(data,
         The Tile size of winograd. E.g. 2 for F(2x2, 3x3) and 4 for F(4x4, 3x3)
 
     strides : tuple of int, optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : tuple of int, optional
         The padding of convolution on both sides of inputs before convolution.
@@ -905,7 +908,7 @@ def contrib_conv2d_winograd_nnpack_without_weight_transform(data,
         The weight expressions.
 
     strides : tuple of int, optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : tuple of int, optional
         The padding of convolution on both sides of inputs before convolution.
@@ -972,7 +975,7 @@ def contrib_conv2d_nchwc(data,
         The kernel expressions.
 
     strides : tuple of int, optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : tuple of int, optional
         The padding of convolution on both sides of inputs before convolution.
@@ -1037,7 +1040,7 @@ def contrib_depthwise_conv2d_nchwc(data,
         The kernel expressions.
 
     strides : tuple of int, optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : tuple of int, optional
         The padding of convolution on both sides of inputs before convolution.
@@ -1153,7 +1156,7 @@ def deformable_conv2d(data,
         The weight expressions.
 
     strides : tuple of int, optional
-        The strides of convoltution.
+        The strides of convolution.
 
     padding : tuple of int, optional
         The padding of convolution on both sides of inputs before convolution.

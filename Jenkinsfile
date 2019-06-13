@@ -38,7 +38,7 @@
 // - Tag the new version as the lates
 // - Periodically cleanup the old versions on local workers
 //
-ci_lint = "tvmai/ci-lint:v0.50"
+ci_lint = "tvmai/ci-lint:v0.51"
 ci_gpu = "tvmai/ci-gpu:v0.51"
 ci_cpu = "tvmai/ci-cpu:v0.50"
 ci_i386 = "tvmai/ci-i386:v0.50"
@@ -92,10 +92,13 @@ def make(docker_type, path, make_flag) {
   timeout(time: max_time, unit: 'MINUTES') {
     try {
       sh "${docker_run} ${docker_type} ./tests/scripts/task_build.sh ${path} ${make_flag}"
+      // always run cpp test when build
+      sh "${docker_run} ${docker_type} ./tests/scripts/task_cpp_unittest.sh"
     } catch (exc) {
       echo 'Incremental compilation failed. Fall back to build from scratch'
       sh "${docker_run} ${docker_type} ./tests/scripts/task_clean.sh ${path}"
       sh "${docker_run} ${docker_type} ./tests/scripts/task_build.sh ${path} ${make_flag}"
+      sh "${docker_run} ${docker_type} ./tests/scripts/task_cpp_unittest.sh"
     }
   }
 }
@@ -132,6 +135,7 @@ stage('Build') {
            echo set\\(USE_CUDNN ON\\) >> config.cmake
            echo set\\(USE_CUDA ON\\) >> config.cmake
            echo set\\(USE_OPENGL ON\\) >> config.cmake
+           echo set\\(USE_MICRO ON\\) >> config.cmake
            echo set\\(USE_LLVM llvm-config-6.0\\) >> config.cmake
            echo set\\(USE_NNPACK ON\\) >> config.cmake
            echo set\\(NNPACK_PATH /NNPACK/build/\\) >> config.cmake
@@ -155,6 +159,7 @@ stage('Build') {
            echo set\\(USE_OPENCL ON\\) >> config.cmake
            echo set\\(USE_ROCM ON\\) >> config.cmake
            echo set\\(USE_VULKAN ON\\) >> config.cmake
+           echo set\\(USE_MICRO ON\\) >> config.cmake
            echo set\\(USE_GRAPH_RUNTIME_DEBUG ON\\) >> config.cmake
            echo set\\(CMAKE_CXX_COMPILER clang-6.0\\) >> config.cmake
            echo set\\(CMAKE_CXX_FLAGS -Werror\\) >> config.cmake
@@ -172,6 +177,7 @@ stage('Build') {
            cd build
            cp ../cmake/config.cmake .
            echo set\\(USE_SORT ON\\) >> config.cmake
+           echo set\\(USE_MICRO ON\\) >> config.cmake
            echo set\\(USE_GRAPH_RUNTIME_DEBUG ON\\) >> config.cmake
            echo set\\(USE_LLVM llvm-config-4.0\\) >> config.cmake
            echo set\\(USE_NNPACK ON\\) >> config.cmake
@@ -183,7 +189,6 @@ stage('Build') {
         make(ci_cpu, 'build', '-j2')
         pack_lib('cpu', tvm_lib)
         timeout(time: max_time, unit: 'MINUTES') {
-          sh "${docker_run} ${ci_cpu} ./tests/scripts/task_cpp_unittest.sh"
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta.sh"
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_rust.sh"
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_golang.sh"
@@ -202,6 +207,7 @@ stage('Build') {
            cd build
            cp ../cmake/config.cmake .
            echo set\\(USE_SORT ON\\) >> config.cmake
+           echo set\\(USE_MICRO ON\\) >> config.cmake
            echo set\\(USE_RPC ON\\) >> config.cmake
            echo set\\(USE_GRAPH_RUNTIME_DEBUG ON\\) >> config.cmake
            echo set\\(USE_LLVM llvm-config-5.0\\) >> config.cmake
@@ -273,6 +279,17 @@ stage('Integration Test') {
         unpack_lib('gpu', tvm_multilib)
         timeout(time: max_time, unit: 'MINUTES') {
           sh "${docker_run} ${ci_gpu} ./tests/scripts/task_python_frontend.sh"
+        }
+      }
+    }
+  },
+  'legacy: GPU': {
+    node('GPU') {
+      ws('workspace/tvm/legacy-python-gpu') {
+        init_git()
+        unpack_lib('gpu', tvm_multilib)
+        timeout(time: max_time, unit: 'MINUTES') {
+          sh "${docker_run} ${ci_gpu} ./tests/scripts/task_python_legacy.sh"
         }
       }
     }
