@@ -27,6 +27,8 @@ TVM_REGISTER_GLOBAL("tvm.contrib.lnsconv.conv3x3").set_body([](TVMArgs args, TVM
   CHECK(TypeMatch(a->dtype, kDLFloat, 32));
   CHECK(TypeMatch(b->dtype, kDLFloat, 32));
 
+  std::cout << "Inside of conv3x3" << std::endl;
+
   // results (single value)
   DLTensor* z = args[2];
   CHECK_EQ(z->ndim, 1);
