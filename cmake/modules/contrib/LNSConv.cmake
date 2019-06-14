@@ -1,0 +1,7 @@
+
+if(USE_LNSCONV)
+
+  file(GLOB LNSCONV_CONTRIB_SRC src/contrib/lnsconv/*.cc)
+  list(APPEND RUNTIME_SRCS ${LNSCONV_CONTRIB_SRC})
+
+endif(USE_LNSCONV)

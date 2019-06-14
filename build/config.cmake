@@ -129,5 +129,8 @@ set(USE_ROCBLAS OFF)
 # Whether use contrib sort
 set(USE_SORT ON)
 
+# Whether to use lns conv
+set(USE_LNSCONV ON)
+
 # Build ANTLR parser for Relay text format
 set(USE_ANTLR OFF)

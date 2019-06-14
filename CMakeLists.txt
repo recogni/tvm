@@ -48,6 +48,7 @@ tvm_option(USE_ROCBLAS "Build with ROCM:RoCBLAS" OFF)
 tvm_option(USE_SORT "Build with sort support" OFF)
 tvm_option(USE_NNPACK "Build with nnpack support" OFF)
 tvm_option(USE_RANDOM "Build with random support" OFF)
+tvm_option(USE_LNSCONV "Build with LNS conv support" OFF)
 tvm_option(USE_ANTLR "Build with ANTLR for Relay parsing" OFF)
 
 # include directories
@@ -200,6 +201,8 @@ include(cmake/modules/contrib/BLAS.cmake)
 include(cmake/modules/contrib/Random.cmake)
 include(cmake/modules/contrib/Sort.cmake)
 include(cmake/modules/contrib/NNPack.cmake)
+include(cmake/modules/contrib/LNSConv.cmake)
+
 include(cmake/modules/contrib/HybridDump.cmake)
 
 add_library(tvm SHARED ${COMPILER_SRCS} ${RUNTIME_SRCS})
